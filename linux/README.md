@@ -14,45 +14,58 @@ sudo apt install -y \
     flex \
     bison \
     bc
-
-PROJ_DIR="/tmp/sandbox/linux"
-SRC_DIR="$PROJ_DIR/src"
-BUILD_DIR="$PROJ_DIR/build"
-mkdir -pv "$PROJ_DIR" "$SRC_DIR" "$BUILD_DIR"
-
 ```
 
-## Build Kernel
+## Boot Kernel with a Minimal initramfs
 
-Get the latest kernel link from https://www.kernel.org :
+You can find the latest Linux kernel URL [on the official site](https://www.kernel.org).
 
 ```console
-KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.9.6.tar.xz"
-KERNEL_BUILD="$BUILD_DIR/linux"
+PROJ_DIR=/tmp/sandbox/linux
+BUILD_DIR=$PROJ_DIR/build
 
-cd "$SRC_DIR"
-curl "$KERNEL_URL" | tar xJf -
+KERNEL_BUILD=$BUILD_DIR/kernel
+mkdir -pv $KERNEL_BUILD
+KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.9.6.tar.xz
+KERNEL_SRC=$(basename $KERNEL_URL | grep -oP '.*(?=.tar)')
 
-cd linux-6.9.6
+cd $PROJ_DIR
+curl $KERNEL_URL | tar xJf -
+
+cd $KERNEL_SRC
 make distclean
-make defconfig O="$KERNEL_BUILD"
-make -j "$(nproc)" O="$KERNEL_BUILD"
-```
+make defconfig O=$KERNEL_BUILD
+make -j $(nproc) O=$KERNEL_BUILD
 
-## Generate a Minimal initramfs
+INITRAMFS_BUILD=$BUILD_DIR/initramfs
+mkdir -pv $INITRAMFS_BUILD
 
-```console
-cat > "$SRC_DIR/init.c" << EOF
+cat > $PROJ_DIR/init.c << EOF
 #include <stdio.h>
+#include <unistd.h>
 int main(int argc, char **argv) {
 	printf("Hello world!\n");
+  sleep(999999999);
 	return 0;
 }
 EOF
 
-gcc -static -o "$BUILD_DIR/init" "$SRC_DIR/init.c"
-echo "$BUILD_DIR/init" | cpio -ov --format=newc > "$BUILD_DIR/initramfs.img"
+gcc -static -o $INITRAMFS_BUILD/init $PROJ_DIR/init.c
+
+cat > $BUILD_DIR/initramfs.list << EOF
+file /init $INITRAMFS_BUILD/init 500 0 0
+EOF
+
+$KERNEL_BUILD/usr/gen_init_cpio $BUILD_DIR/initramfs.list | gzip --best > $BUILD_DIR/initramfs.cpio.gz
+
+cd "$BUILD_DIR"
+qemu-system-x86_64 \
+    -kernel "$KERNEL_BUILD/arch/x86/boot/bzImage" \
+    -initrd "$BUILD_DIR/initramfs.cpio.gz" \
+    -append "console=ttyS0 root=/dev/ram init=/init" \
+    -nographic
 ```
+To end the QEMU session use "Ctrl-a x".
 
 ## Generate a initramfs with BusyBox
 
@@ -113,4 +126,9 @@ qemu-system-x86_64 \
     -nographic
 ```
 
-Use "Ctrl-A X" to kill the run.
+Use "Ctrl-a x" to kill the run.
+
+## References
+
+1. [landley.net: Rootfs HowTo](https://landley.net/writing/rootfs-howto.html)
+1. [Kernel.org: Documentation/filesystems/ramfs-rootfs-initramfs.txt](https://kernel.org/doc/Documentation/filesystems/ramfs-rootfs-initramfs.txt)
